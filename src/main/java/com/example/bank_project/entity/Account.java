@@ -4,7 +4,6 @@ import lombok.Data;
 import lombok.NonNull;
 
 import java.math.BigDecimal;
-import java.util.Currency;
 
 /**
  * Создать класс Account (счет), в котором будет: номер счета, валюта счета (может быть только 3 валюты доллар
