@@ -1,10 +1,15 @@
 package com.example.bank_project.service;
 
+import com.example.bank_project.dto.AccountDtoRq;
+import com.example.bank_project.exception.AccountExistsException;
+import com.example.bank_project.exception.AccountNotFoundException;
+import com.example.bank_project.exception.IncorrectFieldException;
+
 import java.util.Currency;
 
 public interface BankService {
 
-    void openingBankAccount(String accountName, String currencyCode);
+    String openingBankAccount(String accountName, String currencyCode) throws AccountExistsException, AccountNotFoundException, IncorrectFieldException;
 
-    void closingBankAccount(String accountId);
+    String closingBankAccount(String accountId) throws AccountNotFoundException;
 }

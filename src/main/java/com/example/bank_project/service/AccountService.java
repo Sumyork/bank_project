@@ -1,14 +1,16 @@
 package com.example.bank_project.service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Currency;
 import java.util.HashMap;
 import java.util.Map;
 
 import com.example.bank_project.entity.Account;
-import com.example.bank_project.exception.AccountExists;
-import com.example.bank_project.exception.AccountNotFound;
-import com.example.bank_project.exception.AmountDebitedExceedsAmountAccount;
+import com.example.bank_project.exception.AccountExistsException;
+import com.example.bank_project.exception.AccountNotFoundException;
+import com.example.bank_project.exception.AmountDebitedExceedsAmountAccountException;
+import com.example.bank_project.exception.IncorrectFieldException;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -23,26 +25,26 @@ public class AccountService implements BankService {
      * Созданный счет (в виде экземпляра класса Account) нужно хранить в хранилище счетов
      * (аттрибут внутри AccountService). Номера счетов не могут повторяться (подумать,
      * какая структура данных нужна). Если счет уже есть, то возникает ошибка.
-     * 5 Создать метод "закрыть счет", сигнатура: String номер счета. Находит счет в хранилище счетов.
-     * Обнуляет его остатки, проставляет статус "закрыт". Если счет не найден, то выдается ошибка.
      */
-    @Override
-    public void openingBankAccount(String accountName, String currencyCode) {
 
-        if (accounts.get(generateNumberAccount(currencyCode)) != null) {
-            try {
-                throw new AccountExists();
-            } catch (AccountExists e) {
-                System.out.println("Такой аккаунт существует.");
-            }
+    @Override
+    public String openingBankAccount(String accountName, String currencyCode) throws AccountExistsException, IncorrectFieldException {
+
+        String keyAccount = generateNumberAccount(currencyCode);
+
+        if (accounts.putIfAbsent(keyAccount, new Account(keyAccount, accountName,
+                currencyCode, new BigDecimal("0"))) == null) {
+            accounts.putIfAbsent(keyAccount, new Account(keyAccount, accountName,
+                    currencyCode, new BigDecimal("0")));
         } else {
-            accounts.putIfAbsent(generateNumberAccount(currencyCode),
-                    new Account(generateNumberAccount(currencyCode),
-                            accountName, currencyCode, new BigDecimal("0")));
+            throw new AccountExistsException("Аккаунт уже существует.");
         }
+
+        return keyAccount;
     }
 
-    public String generateNumberAccount(String currencyCode) {
+    public String generateNumberAccount(String currencyCode) throws IncorrectFieldException {
+        checkIncorrectCurrencyCode(currencyCode);
         return "40817" + Currency.getInstance(currencyCode).getNumericCodeAsString() + accounts.size();
     }
 
@@ -57,35 +59,20 @@ public class AccountService implements BankService {
         BigDecimal result = null;
 
         if (startCurrency.equals("RUB") && finishCurrency.equals("USD")) {
-            result = conversionAmount.divide(BigDecimal.valueOf(30));
+            result = conversionAmount.divide(BigDecimal.valueOf(30.0), RoundingMode.HALF_UP);
         } else if (startCurrency.equals("USD") && finishCurrency.equals("RUB")) {
-            result = conversionAmount.multiply(BigDecimal.valueOf(30));
+            result = conversionAmount.multiply(BigDecimal.valueOf(30.0));
         } else if (startCurrency.equals("RUB") && finishCurrency.equals("EUR")) {
-            result = conversionAmount.divide(BigDecimal.valueOf(35));
+            result = conversionAmount.divide(BigDecimal.valueOf(35.0), RoundingMode.HALF_UP);
         } else if (startCurrency.equals("EUR") && finishCurrency.equals("RUB")) {
-            result = conversionAmount.multiply(BigDecimal.valueOf(35));
+            result = conversionAmount.multiply(BigDecimal.valueOf(35.0));
         } else if (startCurrency.equals("USD") && finishCurrency.equals("EUR")) {
-            result = conversionAmount.divide(BigDecimal.valueOf(1.7));
+            result = conversionAmount.divide(BigDecimal.valueOf(1.7), RoundingMode.HALF_UP);
         } else if (startCurrency.equals("EUR") && finishCurrency.equals("USD")) {
             result = conversionAmount.multiply(BigDecimal.valueOf(1.7));
         }
 
         return result;
-    }
-
-    /**
-     * Создать метод "есть ли сумма на счете": String номер счета, BigDecimal сумма, валюта.
-     * Проверить, есть ли указанная сумма на счете. Если валюты счетов различаются, происходит конвертация.
-     */
-
-    public void checkSum(String accountId, BigDecimal sum, String currencyCode) {
-        currencyComparison(accountId, sum, currencyCode);
-
-        if (accounts.get(accountId).getAccountBalance().subtract(sum).floatValue() >= 0.0) {
-            System.out.println("Необходимоя сумма на счёте есть.");
-        } else {
-            System.out.println("Недостаточно средств на счёте.");
-        }
     }
 
     /**
@@ -95,18 +82,19 @@ public class AccountService implements BankService {
      * Если сумма списания больше суммы на счете, должна быть ошибка.
      */
 
-    public void debitingAccount(String accountId, BigDecimal debitingSum, String debitingCurrency) {
-        currencyComparison(accountId, debitingSum, debitingCurrency);
+    public String debitingAccount(String accountId, BigDecimal debitingSum, String debitingCurrency) throws IncorrectFieldException, AmountDebitedExceedsAmountAccountException {
 
-        BigDecimal result = accounts.get(accountId).getAccountBalance().subtract(debitingSum);
+        checkIncomingNumber(debitingSum);
+        checkIncorrectCurrencyCode(debitingCurrency);
+        checkSum(accountId, debitingSum, debitingCurrency);
 
-        if (result.floatValue() <= 0.0 || accounts.get(accountId).getAccountBalance().floatValue() <= debitingSum.floatValue()) {
-            try {
-                throw new AmountDebitedExceedsAmountAccount();
-            } catch (AmountDebitedExceedsAmountAccount e) {
-                System.out.println("Не хватает средств на счёте.");
-            }
-        }
+        BigDecimal resultCurrency = currencyComparison(accountId, debitingSum, debitingCurrency);
+
+        BigDecimal result = accounts.get(accountId).getAccountBalance().subtract(resultCurrency);
+        accounts.get(accountId).setAccountBalance(result);
+
+        return "Средства списаны со счёта. Баланс на счёте " + accounts.get(accountId).getAccountBalance()
+                + " " + accounts.get(accountId).getCurrencyCode();
     }
 
     /**
@@ -115,10 +103,19 @@ public class AccountService implements BankService {
      * необходимо произвести конвертацию суммы списания).
      */
 
-    public void addMoney(String accountId, BigDecimal addSum, String addCurrency) {
-        currencyComparison(accountId, addSum, addCurrency);
+    public String addMoney(String accountId, BigDecimal addSum, String addCurrency) throws IncorrectFieldException {
 
-        BigDecimal addMoney = accounts.get(accountId).getAccountBalance().add(addSum);
+        checkIncomingNumber(addSum);
+        checkIncorrectCurrencyCode(addCurrency);
+
+        BigDecimal addComparisonMoney = currencyComparison(accountId, addSum, addCurrency);
+
+        BigDecimal addMoney = accounts.get(accountId).getAccountBalance().add(addComparisonMoney);
+
+        accounts.get(accountId).setAccountBalance(addMoney);
+        return "Счёт пополнился на " + addComparisonMoney + " "
+                + accounts.get(accountId).getCurrencyCode() + ". Баланс на счёте "
+                + addMoney + " " +accounts.get(accountId).getCurrencyCode();
     }
 
     /**
@@ -127,14 +124,39 @@ public class AccountService implements BankService {
      * Если валюты счетов не равны, то произвести конвертацию. Итоговую сумму уменьшить на 1% - комиссия банка.
      */
 
-    public void internalTransfers(String accountIdSender, String accountIdRecipient, BigDecimal subtractSum) {
-        checkSum(accountIdRecipient, subtractSum, accounts.get(accountIdRecipient).getCurrencyCode());
-        currencyComparison(accountIdSender, subtractSum, accounts.get(accountIdRecipient).getCurrencyCode());
+    public String internalTransfers(String accountIdSender, String accountIdRecipient, BigDecimal subtractSum) throws AmountDebitedExceedsAmountAccountException, IncorrectFieldException {
 
-        BigDecimal commission = subtractSum.multiply(BigDecimal.valueOf(0.01));
+        checkIncomingNumber(subtractSum);
+        checkSum(accountIdSender, subtractSum, accounts.get(accountIdSender).getCurrencyCode());
 
-        BigDecimal recipient = accounts.get(accountIdRecipient).getAccountBalance().subtract(subtractSum.subtract(commission));
-        BigDecimal sender = accounts.get(accountIdSender).getAccountBalance().add(subtractSum.subtract(commission));
+        BigDecimal transferMoney = currencyComparison(accountIdRecipient, subtractSum,
+                accounts.get(accountIdSender).getCurrencyCode());
+
+        BigDecimal commissionCurrencyConversion = subtractSum.multiply(BigDecimal.valueOf(0.01));
+        BigDecimal commission = transferMoney.multiply(BigDecimal.valueOf(0.01));
+
+        BigDecimal totalSumTransfer = transferMoney.subtract(commission);
+
+        BigDecimal sender = accounts.get(accountIdSender).getAccountBalance()
+                .subtract(subtractSum);
+        accounts.get(accountIdSender).setAccountBalance(sender);
+
+        BigDecimal recipient = accounts.get(accountIdRecipient).getAccountBalance()
+                .add(totalSumTransfer);
+        accounts.get(accountIdRecipient).setAccountBalance(recipient);
+
+
+        String message = "Перевод " + subtractSum + " " + accounts.get(accountIdSender).getCurrencyCode()
+                + " произведён. Комиссия банка: " + commissionCurrencyConversion
+                + " " + accounts.get(accountIdSender).getCurrencyCode() + "\n";
+
+        String balanceSender = "Баланс отправителя: " + accounts.get(accountIdSender).getAccountBalance()
+                + " " + accounts.get(accountIdSender).getCurrencyCode() + "\n";
+
+        String balanceRecipient = "Баланс получателя: " + accounts.get(accountIdRecipient).getAccountBalance()
+                + " " + accounts.get(accountIdRecipient).getCurrencyCode() + "\n";
+
+        return message + balanceSender + balanceRecipient;
     }
 
     /**
@@ -142,15 +164,11 @@ public class AccountService implements BankService {
      * Если счета нет, то ошибка.
      */
 
-    public String infoAccount(String accountId) {
+    public String infoAccount(String accountId) throws AccountNotFoundException {
         String info = null;
 
         if (accounts.get(accountId) == null) {
-            try {
-                throw new AccountNotFound();
-            } catch (AccountNotFound e) {
-                System.out.println("Такого счёта нет.");
-            }
+            throw new AccountNotFoundException("Счёт " + accountId + " не существует.");
         } else {
             info = accounts.get(accountId).toString();
         }
@@ -158,26 +176,60 @@ public class AccountService implements BankService {
         return info;
     }
 
-    public void currencyComparison(String accountId, BigDecimal sum, String operationCurrency) {
-        if (!operationCurrency.equals(accounts.get(accountId).getCurrencyCode())) {
-            conversion(accounts.get(accountId).getCurrencyCode(), sum, operationCurrency);
-        }
-    }
+    /**
+     * Создать метод "закрыть счет", сигнатура: String номер счета. Находит счет в хранилище счетов.
+     * Обнуляет его остатки, проставляет статус "закрыт". Если счет не найден, то выдается ошибка.
+     */
 
     @Override
-    public void closingBankAccount(String accountId) {
+    public String closingBankAccount(String accountId) throws AccountNotFoundException {
 
-        if (accounts.get(accountId) == null) {
-            try {
-                throw new AccountNotFound();
-            } catch (AccountNotFound e) {
-                System.out.println("Счёт не найден!");
-            }
-        } else {
+        String result;
+
+        if (accounts.get(accountId) != null) {
             accounts.get(accountId).setAccountBalance(new BigDecimal("0"));
             accounts.remove(accountId).setStatus(false);
+            result = "Счёт " + accountId + " закрыт.";
+        } else {
+            throw new AccountNotFoundException("Счёт " + accountId + " не существует.");
+        }
+        return result;
+    }
+
+    public BigDecimal currencyComparison(String accountId, BigDecimal sum, String operationCurrency) {
+
+        BigDecimal currency = sum;
+
+        if (!operationCurrency.equals(accounts.get(accountId).getCurrencyCode())) {
+            currency = conversion(operationCurrency, sum, accounts.get(accountId).getCurrencyCode());
+        }
+
+        return currency;
+    }
+
+    /**
+     * Создать метод "есть ли сумма на счете": String номер счета, BigDecimal сумма, валюта.
+     * Проверить, есть ли указанная сумма на счете. Если валюты счетов различаются, происходит конвертация.
+     */
+
+    public void checkSum(String accountId, BigDecimal sum, String currencyCode) throws AmountDebitedExceedsAmountAccountException {
+
+        BigDecimal checkMoney = currencyComparison(accountId, sum, currencyCode);
+
+        if (accounts.get(accountId).getAccountBalance().floatValue() < checkMoney.floatValue()) {
+            throw new AmountDebitedExceedsAmountAccountException("Недостаточно средств на счёте.");
         }
     }
 
+    public void checkIncomingNumber(BigDecimal incomingNumber) throws IncorrectFieldException {
+        if (incomingNumber.floatValue() <= 0.0) {
+            throw new IncorrectFieldException("Вводимая сумма должна быть больше 0.");
+        }
+    }
 
+    public void checkIncorrectCurrencyCode(String currencyCode) throws IncorrectFieldException {
+        if (!currencyCode.equals("RUB") && !currencyCode.equals("USD") && !currencyCode.equals("EUR")) {
+            throw new IncorrectFieldException("Некорректная валюта.");
+        }
+    }
 }

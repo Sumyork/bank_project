@@ -6,7 +6,7 @@ import java.math.BigDecimal;
 
 @Data
 public class AccountDtoRq {
-    String accountName;
-    String currencyCode;
-    BigDecimal accountBalance;
+    private String accountName;
+    private String currencyCode;
+    private BigDecimal accountBalance;
 }
